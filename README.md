@@ -17,6 +17,19 @@ C:/Python313/python.exe -m streamlit run app.py --server.port 8501
 ```
 Acesse: `http://localhost:8501`
 
+## Deploy no Streamlit Cloud
+1. Garanta que seu repositório no GitHub está atualizado (este projeto já possui `requirements.txt`).
+2. Acesse https://share.streamlit.io/ e conecte sua conta ao GitHub.
+3. Selecione o repositório `joaomefg/ExtractIMG` e escolha a branch `main`.
+4. Em "Main file path", informe `app.py`.
+5. (Opcional) Defina a versão do Python como `3.11` nas configurações avançadas.
+6. Clique em Deploy.
+
+Observações:
+- As dependências necessárias estão em `requirements.txt` (`streamlit`, `pymupdf`, `pillow`).
+- O app não grava arquivos no disco; o ZIP é gerado em memória e oferecido para download.
+- Se algum PDF for muito grande, o tempo de extração pode aumentar. Streamlit Cloud possui limites de memória/tempo.
+
 ## Execução (script local)
 O script `main.py` extrai imagens de PDFs presentes em `PASTA_DOS_PDFS` e salva em `PASTA_DE_SAIDA`.
 ```powershell
