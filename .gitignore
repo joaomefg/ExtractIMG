@@ -1,0 +1,14 @@
+# Pastas geradas/local
+PASTA_DE_SAIDA/
+PASTA_DOS_PDFS/
+__pycache__/
+.streamlit/
+
+# Ambientes virtuais
+venv/
+.venv/
+
+# Arquivos temporários
+*.zip
+*.tmp
+*.log
