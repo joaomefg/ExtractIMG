@@ -3,6 +3,8 @@ import fitz  # PyMuPDF
 import io
 from PIL import Image
 import zipfile
+import base64
+import streamlit.components.v1 as components
 
 
 def parse_pages_input(pages_str: str, total_pages: int):
@@ -112,25 +114,31 @@ if "removed_images" not in st.session_state:
     st.session_state["removed_images"] = set()
 if "pending_delete_pdfs" not in st.session_state:
     st.session_state["pending_delete_pdfs"] = set()
+if "scroll_to_top" not in st.session_state:
+    st.session_state["scroll_to_top"] = False
 
 # Callbacks para ações imediatas (evitam necessidade de duplo clique)
 def _remove_image(image_id: str):
     st.session_state["removed_images"].add(image_id)
+    st.session_state["scroll_to_top"] = True
 
 def _restore_image(image_id: str):
     st.session_state["removed_images"].discard(image_id)
+    st.session_state["scroll_to_top"] = True
 
 # Callbacks para exclusão de PDF inteiro
 def _mark_pdf_for_delete(fname: str):
     pend = set(st.session_state.get("pending_delete_pdfs", set()))
     pend.add(fname)
     st.session_state["pending_delete_pdfs"] = pend
+    st.session_state["scroll_to_top"] = True
 
 def _cancel_pdf_delete(fname: str):
     pend = set(st.session_state.get("pending_delete_pdfs", set()))
     if fname in pend:
         pend.remove(fname)
     st.session_state["pending_delete_pdfs"] = pend
+    st.session_state["scroll_to_top"] = True
 
 def _confirm_pdf_delete(fname: str):
     # Remove do dicionário principal
@@ -145,29 +153,66 @@ def _confirm_pdf_delete(fname: str):
     pend = set(st.session_state.get("pending_delete_pdfs", set()))
     pend.discard(fname)
     st.session_state["pending_delete_pdfs"] = pend
+    st.session_state["scroll_to_top"] = True
 
 # Moldura suave envolvendo imagem + ações no mesmo bloco
 st.markdown(
     """
     <style>
-    /* Card para o bloco IMEDIATO dentro da coluna que contém imagem e ações */
-    div[data-testid="column"] > div[data-testid="stVerticalBlock"]:has(div[data-testid="stImage"]) {
+    /* Card para o bloco IMEDIATO dentro da coluna que contém imagem removida ou normal */
+    div[data-testid="column"] > div[data-testid="stVerticalBlock"]:has(div[data-testid="stImage"]),
+    div[data-testid="column"] > div[data-testid="stVerticalBlock"]:has(div.img-removed) {
         border: 1px solid rgba(255,255,255,0.22);
         border-radius: 10px;
         padding: 10px;
         background: rgba(255,255,255,0.04);
         margin-bottom: 10px;
     }
-    div[data-testid="column"] > div[data-testid="stVerticalBlock"]:has(div[data-testid="stImage"]):hover {
+    div[data-testid="column"] > div[data-testid="stVerticalBlock"]:has(div[data-testid="stImage"]):hover,
+    div[data-testid="column"] > div[data-testid="stVerticalBlock"]:has(div.img-removed):hover {
         border-color: rgba(255,255,255,0.36);
         box-shadow: 0 0 0 2px rgba(255,255,255,0.10) inset;
     }
     /* Ajusta figura interna para não criar espaços extras */
     div[data-testid="stImage"] figure { margin: 0; }
+    /* Garante que imagens custom e padrão ocupem toda largura da coluna */
+    .img-removed img { display: block; width: 100%; height: auto; }
+
+    /* Overlay vermelho para imagens removidas: sempre visível, sem hover */
+    .img-removed { position: relative; display: block; }
+    .img-removed .img-removed-overlay {
+        position: absolute;
+        inset: 0;
+        background: rgba(255, 0, 0, 0.22);
+        border-radius: 8px;
+        color: #fff;
+        font-weight: 600;
+        letter-spacing: 0.3px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        text-shadow: 0 1px 2px rgba(0,0,0,0.4);
+        transition: background 120ms ease-in-out;
+    }
     </style>
     """,
     unsafe_allow_html=True,
 )
+
+# Rola automaticamente para o topo após ações que provocam rerun
+if st.session_state.get("scroll_to_top"):
+    components.html(
+        """
+        <script>
+        setTimeout(function(){
+          const root = window.parent.document.documentElement;
+          if (root) { root.scrollTo({top: 0, behavior: 'auto'}); }
+        }, 10);
+        </script>
+        """,
+        height=0,
+    )
+    st.session_state["scroll_to_top"] = False
 
 # Placeholder para poder remover o cabeçalho dinamicamente
 header = st.empty()
@@ -268,18 +313,37 @@ if uploaded_files and start_btn:
                             args=(fname,),
                         )
 
-                    st.write(f"{len(imgs)} imagem(ns) em {fname}")
+                    removed_set = st.session_state.get("removed_images", set())
+                    visible_count = sum(1 for nome_img, _ in imgs if f"{fname}:{nome_img}" not in removed_set)
+                    st.write(f"{visible_count} imagem(ns) em {fname}")
                     cols = st.columns(3)
                     for idx, (nome_img, conteudo) in enumerate(imgs):
                         image_id = f"{fname}:{nome_img}"
                         try:
                             slot = cols[idx % 3].container()
                             if image_id in st.session_state["removed_images"]:
-                                slot.warning(f"Removida: {nome_img}")
+                                # Exibe a imagem com overlay vermelho ao hover indicando remoção
+                                try:
+                                    try:
+                                        pil_img = Image.open(io.BytesIO(conteudo))
+                                        fmt = (pil_img.format or "PNG").lower()
+                                    except Exception:
+                                        fmt = "png"
+                                    mime = "image/png" if fmt == "png" else "image/jpeg" if fmt in ("jpg", "jpeg") else "image/png"
+                                    b64 = base64.b64encode(conteudo).decode("utf-8")
+                                    html = f"""
+                                        <div class=\"img-removed\">
+                                            <img src=\"data:{mime};base64,{b64}\" alt=\"{nome_img}\" style=\"width:100%; border-radius:8px;\" />
+                                            <div class=\"img-removed-overlay\">Removida</div>
+                                        </div>
+                                    """
+                                    slot.markdown(html, unsafe_allow_html=True)
+                                except Exception:
+                                    slot.write(f"Imagem removida: {nome_img}")
                                 slot.button("↩️ Restaurar", key=f"restore_{image_id}", on_click=_restore_image, args=(image_id,))
                             else:
                                 img = Image.open(io.BytesIO(conteudo))
-                                slot.image(img, caption=nome_img, width="stretch")
+                                slot.image(img, caption=nome_img, use_container_width=True)
                                 slot.button("🗑️ Remover", key=f"remove_{image_id}", on_click=_remove_image, args=(image_id,))
                         except Exception:
                             cols[idx % 3].write(f"Não foi possível exibir: {nome_img}")
@@ -347,18 +411,36 @@ if st.session_state.get("images_by_file") and not start_btn:
                             args=(fname,),
                         )
 
-                    st.write(f"{len(imgs)} imagem(ns) em {fname}")
+                    visible_count = sum(1 for nome_img, _ in imgs if f"{fname}:{nome_img}" not in removed)
+                    st.write(f"{visible_count} imagem(ns) em {fname}")
                     cols = st.columns(3)
                     for idx, (nome_img, conteudo) in enumerate(imgs):
                         image_id = f"{fname}:{nome_img}"
                         try:
                             slot = cols[idx % 3].container()
                             if image_id in removed:
-                                slot.warning(f"Removida: {nome_img}")
+                                # Exibe a imagem com overlay vermelho ao hover indicando remoção (persistente)
+                                try:
+                                    try:
+                                        pil_img = Image.open(io.BytesIO(conteudo))
+                                        fmt = (pil_img.format or "PNG").lower()
+                                    except Exception:
+                                        fmt = "png"
+                                    mime = "image/png" if fmt == "png" else "image/jpeg" if fmt in ("jpg", "jpeg") else "image/png"
+                                    b64 = base64.b64encode(conteudo).decode("utf-8")
+                                    html = f"""
+                                        <div class=\"img-removed\">
+                                            <img src=\"data:{mime};base64,{b64}\" alt=\"{nome_img}\" style=\"width:100%; border-radius:8px;\" />
+                                            <div class=\"img-removed-overlay\">Removida</div>
+                                        </div>
+                                    """
+                                    slot.markdown(html, unsafe_allow_html=True)
+                                except Exception:
+                                    slot.write(f"Imagem removida: {nome_img}")
                                 slot.button("↩️ Restaurar", key=f"restore_persist_{image_id}", on_click=_restore_image, args=(image_id,))
                             else:
                                 img = Image.open(io.BytesIO(conteudo))
-                                slot.image(img, caption=nome_img, width="stretch")
+                                slot.image(img, caption=nome_img, use_container_width=True)
                                 slot.button("🗑️ Remover", key=f"remove_persist_{image_id}", on_click=_remove_image, args=(image_id,))
                         except Exception:
                             cols[idx % 3].write(f"Não foi possível exibir: {nome_img}")
